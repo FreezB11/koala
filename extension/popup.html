@@ -1,43 +1,176 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap');
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      width: 280px;
-      background: #0d0f12;
-      color: #e2e8f0;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-      padding: 16px;
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      width: 400px; 
+      padding: 15px; 
+      font-family: system-ui, sans-serif;
+      background: #1a1a2e;
+      color: white;
     }
-    .title { font-size: 11px; font-weight: 600; color: #4ade80; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 12px; }
-    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #374151; flex-shrink: 0; transition: all 0.3s; }
-    .dot.online  { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
-    .dot.offline { background: #f87171; }
-    .label { color: #9ca3af; font-size: 11px; }
-    .status { color: #e2e8f0; font-size: 11px; }
-    .divider { height: 1px; background: #1f2937; margin: 10px 0; }
-    .hint { color: #4b5563; font-size: 10px; line-height: 1.6; }
-    .hint code { color: #38bdf8; }
+    h2 { 
+      font-size: 16px; 
+      margin-bottom: 12px;
+      color: #eee;
+    }
+    .site-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      background: #0f3460;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-bottom: 10px;
+    }
+    textarea { 
+      width: 100%; 
+      height: 80px; 
+      padding: 10px;
+      border: 1px solid #444;
+      border-radius: 8px;
+      background: #16213e;
+      color: white;
+      font-size: 14px;
+      resize: vertical;
+      margin-bottom: 10px;
+    }
+    textarea:focus { outline: none; border-color: #0f3460; }
+    
+    .section {
+      margin-bottom: 15px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid #444;
+    }
+    .section:last-child { border-bottom: none; }
+    
+    .section-title {
+      font-size: 13px;
+      color: #aaa;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .buttons {
+      display: flex;
+      gap: 8px;
+    }
+    button { 
+      flex: 1;
+      padding: 10px;
+      background: #e94560;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #ff6b6b; }
+    button.secondary { background: #0f3460; }
+    button.secondary:hover { background: #1a4a7a; }
+    button.success { background: #10b981; }
+    
+    .response-box {
+      background: #16213e;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 100px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin-bottom: 8px;
+    }
+    .response-box:empty::before {
+      content: "No response captured yet...";
+      color: #666;
+      font-style: italic;
+    }
+    
+    .options {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+    label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+    
+    .status {
+      font-size: 12px;
+      color: #aaa;
+      text-align: center;
+      margin-top: 5px;
+    }
+    
+    .debug-section {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #444;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      background: #16213e;
+      color: white;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .btn-small {
+      padding: 6px 12px;
+      font-size: 12px;
+      width: auto;
+      margin-right: 5px;
+    }
   </style>
 </head>
 <body>
-  <div class="title">Agent Injector</div>
-  <div class="row">
-    <div class="dot" id="dot"></div>
-    <span class="label">bridge:&nbsp;</span>
-    <span class="status" id="statusText">checking...</span>
+  <h2>🚀 AI Prompt Injector + Capture</h2>
+  <div class="site-badge" id="siteBadge">Unknown Site</div>
+  
+  <!-- INJECT SECTION -->
+  <div class="section">
+    <div class="section-title">Inject Prompt</div>
+    <textarea id="prompt" placeholder="Type prompt to inject..."></textarea>
+    <div class="options">
+      <label><input type="checkbox" id="autoSubmit" checked> Auto-submit</label>
+      <label><input type="checkbox" id="clearFirst" checked> Clear first</label>
+    </div>
+    <div class="buttons">
+      <button id="injectBtn">Inject</button>
+      <button id="forceInject" class="secondary">Force</button>
+    </div>
   </div>
-  <div class="divider"></div>
-  <div class="hint">
-    Type prompts in your terminal.<br>
-    Replies are auto-injected here.<br><br>
-    Make sure <code>go run agent.go</code> is running.
+  
+  <!-- CAPTURE SECTION -->
+  <div class="section">
+    <div class="section-title">Capture Response</div>
+    <div class="response-box" id="responseBox"></div>
+    <div class="buttons">
+      <button id="captureBtn" class="success">Capture Last</button>
+      <button id="copyBtn" class="secondary">Copy</button>
+    </div>
   </div>
+  
+  <!-- DEBUG SECTION -->
+  <div class="debug-section">
+    <div class="section-title">Debug Tools</div>
+    <input type="text" id="customSelector" placeholder="Custom CSS selector...">
+    <div>
+      <button class="btn-small" id="testSelector">Test</button>
+      <button class="btn-small" id="findInputs">Find Inputs</button>
+    </div>
+  </div>
+  
+  <div class="status" id="status"></div>
+
   <script src="popup.js"></script>
 </body>
 </html>

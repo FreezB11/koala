@@ -1,65 +1,80 @@
-// content.js — just listens for INJECT messages from the background service worker
+// Content script runs on AI chat pages to provide backup injection capability
+console.log('AI Prompt Filler: Content script loaded');
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type === "INJECT" && msg.text) {
-    const ok = injectText(msg.text);
-    sendResponse({ ok });
+// Listen for messages from popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'fillInput') {
+    try {
+      const result = fillInputOnPage(request.text, request.site, request.autoSubmit);
+      sendResponse({ success: true, result });
+    } catch (error) {
+      sendResponse({ success: false, error: error.message });
+    }
+    return true; // Keep channel open for async
   }
-  return true;
 });
 
-function injectText(text) {
-  const selectors = [
-    'div.ql-editor[contenteditable="true"]',
-    'rich-textarea div[contenteditable="true"]',
-    '#prompt-textarea',
-    'div[contenteditable="true"].ProseMirror',
-    'div[contenteditable="true"]',
-    'textarea',
-  ];
+function fillInputOnPage(text, site, autoSubmit) {
+  // Same logic as in popup.js but accessible via messaging
+  const inputSelectors = {
+    chatgpt: [
+      '#prompt-textarea',
+      '[data-testid="text-input"]',
+      'div[contenteditable="true"]',
+      'textarea[placeholder*="Message"]'
+    ],
+    gemini: [
+      '.rich-text-editor',
+      'div[contenteditable="true"]',
+      'input-area textarea',
+      '[placeholder*="Ask"]'
+    ],
+    claude: [
+      '.ProseMirror',
+      'div[contenteditable="true"]',
+      '[role="textbox"]'
+    ]
+  };
 
-  let el = null;
-  for (const sel of selectors) {
-    el = document.querySelector(sel);
-    if (el) break;
+  const selectors = inputSelectors[site] || [];
+  let element = null;
+
+  for (const selector of selectors) {
+    element = document.querySelector(selector);
+    if (element) break;
   }
 
-  if (!el) {
-    console.error("[AgentInjector] No input element found");
-    return false;
+  if (!element) {
+    throw new Error('Input field not found');
   }
 
-  el.focus();
-
-  if (el.tagName === "TEXTAREA") {
-    el.value = text;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+  // Fill the field
+  element.focus();
+  
+  if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+    element.value = text;
   } else {
-    document.execCommand("selectAll", false, null);
-    document.execCommand("insertText", false, text);
-    el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
+    element.innerHTML = text.replace(/\n/g, '<br>');
   }
 
-  console.log("[AgentInjector] Injected:", text.slice(0, 60));
+  // Trigger events
+  ['focus', 'input', 'change', 'keyup'].forEach(eventType => {
+    const event = new Event(eventType, { bubbles: true });
+    element.dispatchEvent(event);
+  });
 
-  setTimeout(() => {
-    const submitSelectors = [
-      'button[aria-label*="Send"]',
-      'button[data-testid="send-button"]',
-      'button[aria-label="Submit"]',
-      'button[jsname="Utb3Nb"]',
-    ];
-    for (const sel of submitSelectors) {
-      const btn = document.querySelector(sel);
-      if (btn && !btn.disabled) {
-        btn.click();
-        console.log("[AgentInjector] Submitted via", sel);
-        return;
-      }
-    }
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-  }, 500);
+  if (autoSubmit) {
+    setTimeout(() => {
+      const keyEvent = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true
+      });
+      element.dispatchEvent(keyEvent);
+    }, 100);
+  }
 
-  return true;
+  return { filled: true, element: element.tagName };
 }

@@ -1,38 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Agent Prompt Injector",
-  "version": "1.0",
-  "description": "Injects LLM agent replies from terminal into AI chat sites",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "tabs"
-  ],
+  "name": "AI Prompt Injector",
+  "version": "2.1",
+  "description": "Direct prompt injection for ChatGPT, Gemini, Claude, and Kimi",
+  "permissions": ["activeTab", "scripting"],
   "host_permissions": [
-    "http://localhost/*",
-    "http://127.0.0.1/*",
-    "https://gemini.google.com/*",
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
-    "https://claude.ai/*"
+    "https://gemini.google.com/*",
+    "https://claude.ai/*",
+    "https://www.claude.ai/*",
+    "https://kimi.com/*",
+    "https://www.kimi.com/*"
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Agent Injector"
-  },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://gemini.google.com/*",
-        "https://chat.openai.com/*",
-        "https://chatgpt.com/*",
-        "https://claude.ai/*"
-      ],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ]
+    "default_popup": "popup.html"
+  }
 }
