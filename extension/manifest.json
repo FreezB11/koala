@@ -2,8 +2,11 @@
   "manifest_version": 3,
   "name": "AI Prompt Injector",
   "version": "2.1",
+  "background":{
+    "service_worker": "background.js"
+  },
   "description": "Direct prompt injection for ChatGPT, Gemini, Claude, and Kimi",
-  "permissions": ["activeTab", "scripting"],
+  "permissions": ["activeTab", "scripting", "tabs", "storage"],
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
@@ -11,9 +14,24 @@
     "https://claude.ai/*",
     "https://www.claude.ai/*",
     "https://kimi.com/*",
-    "https://www.kimi.com/*"
+    "https://www.kimi.com/*",
+    "http://localhost:3000/*",
+    "http://*/*",
+    "https://*/*"
   ],
   "action": {
     "default_popup": "popup.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://kimi.com/*"
+      ],
+      "js": ["content.js"]
+    }
+  ]
 }
