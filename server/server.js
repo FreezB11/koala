@@ -77,10 +77,10 @@ rl.on("line", (line) => {
       type: "inject",
       text: text
     }));
-    client.send(JSON.stringify({
-      type: "inject",
-      text: " "
-    }));
+    // client.send(JSON.stringify({
+    //   type: "inject",
+    //   text: " "
+    // }));
   }
 
   if(line === "capture"){

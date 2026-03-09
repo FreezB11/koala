@@ -49,115 +49,68 @@ async function getTargetTab(){
 
   if(!tabs.length){
     console.log("No AI tab found");
-    return [];
+    return null;
   }
 
-  return tabs;
+  return tabs[0];
 }
 
 
 
-// async function inject(text){
-
-//   const tab = await getTargetTab();
-//   if(!tab) return;
-
-//   await chrome.scripting.executeScript({
-
-//     target:{tabId:tab.id},
-
-//     func:(text)=>{
-
-//       const el =
-//         document.querySelector("#prompt-textarea") ||
-//         document.querySelector(".ProseMirror") ||
-//         document.querySelector('[contenteditable="true"]') ||
-//         document.querySelector("textarea");
-
-//       if(!el){
-//         console.log("input not found");
-//         return;
-//       }
-
-//       el.focus();
-
-//       if(el.tagName==="TEXTAREA"){
-
-//         el.value=text;
-//         el.dispatchEvent(new Event("input",{bubbles:true}));
-
-//       }else{
-
-//         el.innerHTML=text.replace(/\n/g,"<br>");
-
-//       }
-//       const enterEvent = new KeyboardEvent("keydown", {
-//         bubbles: true,
-//         cancelable: true,
-//         key: "Enter",
-//         code: "Enter"
-//       });
-
-//       el.dispatchEvent(enterEvent);
-//       el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-//       // Try click send button
-//       document.querySelector('button[type="submit"], button svg, [data-testid="send-button"]')?.click();
-
-//     },
-
-//     args:[text]
-
-//   });
-
-// }
 async function inject(text){
 
-  const tabs = await getTargetTabs();
-  if(!tabs.length) return;
+  const tab = await getTargetTab();
+  if(!tab) return;
 
-  for(const tab of tabs){
+  await chrome.scripting.executeScript({
 
-    await chrome.scripting.executeScript({
+    target:{tabId:tab.id},
 
-      target:{tabId:tab.id},
+    func:(text)=>{
 
-      func:(text)=>{
+      const el =
+        document.querySelector("#prompt-textarea") ||
+        document.querySelector(".ProseMirror") ||
+        document.querySelector('[contenteditable="true"]') ||
+        document.querySelector("textarea");
 
-        const el =
-          document.querySelector("#prompt-textarea") ||
-          document.querySelector(".ProseMirror") ||
-          document.querySelector('[contenteditable="true"]') ||
-          document.querySelector("textarea");
+      if(!el){
+        console.log("input not found");
+        return;
+      }
 
-        if(!el){
-          console.log("input not found");
-          return;
-        }
+      el.focus();
 
-        el.focus();
+      if(el.tagName==="TEXTAREA"){
 
-        if(el.tagName==="TEXTAREA"){
-          el.value=text;
-          el.dispatchEvent(new Event("input",{bubbles:true}));
-        }else{
-          el.innerHTML=text.replace(/\n/g,"<br>");
-        }
+        el.value=text;
+        el.dispatchEvent(new Event("input",{bubbles:true}));
 
-        el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+      }else{
 
-        document.querySelector(
-          'button[type="submit"],[data-testid="send-button"]'
-        )?.click();
+        el.innerHTML=text.replace(/\n/g,"<br>");
 
-      },
+      }
+      const enterEvent = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        code: "Enter"
+      });
 
-      args:[text]
+      el.dispatchEvent(enterEvent);
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      // Try click send button
+      document.querySelector('button[type="submit"], button svg, [data-testid="send-button"]')?.click();
 
-    });
+    },
 
-  }
+    args:[text]
+
+  });
 
 }
+
 
 
 async function capture(){
