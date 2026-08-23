@@ -1,10 +1,12 @@
-# orchestrator.py - Main orchestrator agent (Nemo) (v2: consolidated, robust)
+# orchestrator.py - Main orchestrator agent (Nemo) (v3: robust, with health checks, retry, logging)
 
 import os
 import json
 import logging
+import sys
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -27,6 +29,8 @@ from tools import (
 from agents.nemo import nvidia_nemo
 from agents.orchestrator_tools import make_google_agent_tools
 from ascii import asciii
+from health import HealthChecker, print_health_report, HealthStatus
+from retry import RetryPolicy
 
 # Colors
 CYAN = "\033[96m"
@@ -59,6 +63,9 @@ class GoogleWorker:
     label: str
     color: str
     system_prompt: str = "You are a helpful coding assistant. Be concise and practical. Use tools when needed."
+    retry_policy: RetryPolicy = field(default_factory=lambda: RetryPolicy(
+        max_retries=3, base_delay=1.0, max_delay=30.0
+    ))
 
     def run(self, prompt: str, stream: bool = True) -> str:
         """Run the worker on a prompt, streaming output."""
@@ -67,14 +74,22 @@ class GoogleWorker:
 
         print(f"{self.color}[{self.label}] {RESET}", end="", flush=True)
 
-        stream_iter = goog(
-            self.client,
-            memory=[],
-            input=prompt,
-            thinking_level=config.agent.worker_thinking_level,
-            stream=True,
-            temperature=config.agent.worker_temperature,
-        )
+        def _run_with_retry():
+            stream_iter = goog(
+                self.client,
+                memory=[],
+                input=prompt,
+                thinking_level=config.agent.worker_thinking_level,
+                stream=True,
+                temperature=config.agent.worker_temperature,
+            )
+            return stream_iter
+
+        try:
+            stream_iter = self.retry_policy.execute(_run_with_retry)
+        except Exception as e:
+            logger.error(f"Worker {self.label} failed after retries: {e}")
+            return f"[Worker {self.label} error: {e}]"
 
         text = ""
         if stream:
@@ -93,12 +108,38 @@ class GoogleWorker:
 class Orchestrator:
     """Main orchestrator agent (Nemo)."""
 
-    def __init__(self):
+    def __init__(self, run_health_checks: bool = True):
+        self.setup_logging()
         self.setup_clients()
         self.setup_memory()
         self.messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.max_turns = config.agent.max_turns
         self.turn_count = 0
+        self.session_start = datetime.now()
+        self.metrics = {
+            "turns": 0,
+            "tool_calls": 0,
+            "worker_calls": 0,
+            "errors": 0,
+            "total_latency_ms": 0,
+        }
+        
+        if run_health_checks:
+            self.run_startup_health_checks()
+
+    def setup_logging(self):
+        """Configure structured logging."""
+        log_config = config.logging
+        handlers = [logging.StreamHandler(sys.stdout)]
+        if log_config.log_file:
+            handlers.append(logging.FileHandler(log_config.log_file))
+        
+        logging.basicConfig(
+            level=getattr(logging, log_config.level),
+            format=log_config.format,
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("orchestrator")
 
     def setup_clients(self):
         """Initialize API clients."""
@@ -128,6 +169,24 @@ class Orchestrator:
         """Initialize memory system."""
         self.memory = MemoryManager()
 
+    def run_startup_health_checks(self):
+        """Run health checks on startup."""
+        self.logger.info("Running startup health checks...")
+        checker = HealthChecker()
+        results = checker.run_all_checks()
+        print_health_report(results)
+        
+        overall = checker.get_overall_status(results)
+        if overall == HealthStatus.UNHEALTHY:
+            self.logger.error("Critical services unhealthy. Some features may not work.")
+            print(f"{RED}Warning: Some services are unhealthy. Check logs.{RESET}")
+        elif overall == HealthStatus.DEGRADED:
+            self.logger.warning("Some services degraded. Performance may be affected.")
+            print(f"{ORANGE}Warning: Some services degraded.{RESET}")
+        else:
+            self.logger.info("All services healthy")
+            print(f"{GREEN}All services healthy{RESET}")
+
     def should_consider_memory(self, text: str) -> bool:
         """Check if input should be stored in memory."""
         text = text.strip()
@@ -151,11 +210,13 @@ class Orchestrator:
                     lines.append(text)
             return "\n".join(lines)
         except Exception as e:
-            logging.error(f"Memory search error: {e}")
+            self.logger.error(f"Memory search error: {e}")
             return ""
 
     def stream_nemo_turn(self) -> tuple[str, List[Dict[str, Any]]]:
         """Stream one Nemo turn, return (reply_text, tool_calls)."""
+        start_time = datetime.now()
+        
         stream = nvidia_nemo(
             self.nvidia_client,
             memory=self.messages,
@@ -196,6 +257,12 @@ class Orchestrator:
                             slot["arguments"] += tc.function.arguments
 
         print()
+        
+        # Update metrics
+        latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+        self.metrics["total_latency_ms"] += latency_ms
+        self.metrics["turns"] += 1
+        
         tool_calls = [tool_calls_acc[i] for i in sorted(tool_calls_acc.keys())]
         return reply_text, tool_calls
 
@@ -248,6 +315,7 @@ class Orchestrator:
     def execute_tool(self, name: str, args: Dict[str, Any]) -> ToolResult:
         """Execute a local tool."""
         if name in {"ask_google_agent_1", "ask_google_agent_2"}:
+            self.metrics["worker_calls"] += 1
             worker = self.worker_1 if name == "ask_google_agent_1" else self.worker_2
             return ToolResult(True, worker.run(args.get("message", "")))
 
@@ -258,6 +326,7 @@ class Orchestrator:
         try:
             return fn(**args)
         except Exception as e:
+            self.logger.error(f"Tool {name} error: {e}")
             return ToolResult(False, error=str(e))
 
     def run_turn(self, task: str) -> str:
@@ -302,10 +371,15 @@ class Orchestrator:
                     fn_args = {}
 
                 print(f"{CYAN}[tool call: {fn_name}({fn_args})]{RESET}")
+                self.metrics["tool_calls"] += 1
 
                 result = self.execute_tool(fn_name, fn_args)
 
                 print(f"{CYAN}[tool result: {str(result)[:200]}]{RESET}")
+
+                if not result.success:
+                    self.metrics["errors"] += 1
+                    self.logger.error(f"Tool {fn_name} failed: {result.error}")
 
                 self.messages.append({
                     "role": "tool",
@@ -319,7 +393,7 @@ class Orchestrator:
     def run_interactive(self):
         """Run interactive REPL."""
         asciii()
-        print(f"{GREEN}Nemo Orchestrator ready. Type 'exit' to quit.{RESET}\n")
+        print(f"{GREEN}Nemo Orchestrator v3 ready. Type 'exit' to quit.{RESET}\n")
 
         while True:
             try:
@@ -330,7 +404,7 @@ class Orchestrator:
 
                 # Built-in commands
                 if inp.lower() == "exit":
-                    self.memory.save()
+                    self.save_session()
                     break
 
                 if inp.lower() == "/memory":
@@ -355,6 +429,14 @@ class Orchestrator:
                     self.show_history()
                     continue
 
+                if inp.lower() == "/metrics":
+                    self.show_metrics()
+                    continue
+
+                if inp.lower() == "/health":
+                    self.run_health_checks()
+                    continue
+
                 if inp.lower() == "/help":
                     self.show_help()
                     continue
@@ -371,12 +453,18 @@ class Orchestrator:
 
             except KeyboardInterrupt:
                 print("\nSaving memory...")
-                self.memory.save()
+                self.save_session()
                 break
 
             except Exception as e:
+                self.metrics["errors"] += 1
+                self.logger.exception("Error in main loop")
                 print(f"\n{RED}Error: {e}{RESET}")
-                logging.exception("Error in main loop")
+
+    def save_session(self):
+        """Save memory and session metrics."""
+        self.memory.save()
+        self.logger.info(f"Session ended. Metrics: {self.metrics}")
 
     def show_memory(self):
         """Display all memories."""
@@ -386,7 +474,8 @@ class Orchestrator:
             print("No memories stored.")
         else:
             for i, mem in enumerate(memories, 1):
-                print(f"\n[{i}] (accessed: {mem.access_count}x)")
+                summary_marker = " [SUMMARY]" if getattr(mem, 'is_summary', False) else ""
+                print(f"\n[{i}] (accessed: {mem.access_count}x){summary_marker}")
                 print(mem.text)
         print(f"\nTotal Memories: {len(self.memory)}\n")
 
@@ -413,6 +502,25 @@ class Orchestrator:
                 print(f"  [{i}] {role.upper()}: {content[:100]}")
         print()
 
+    def show_metrics(self):
+        """Show session metrics."""
+        print("\n=== SESSION METRICS ===")
+        print(f"  Turns: {self.metrics['turns']}")
+        print(f"  Tool calls: {self.metrics['tool_calls']}")
+        print(f"  Worker calls: {self.metrics['worker_calls']}")
+        print(f"  Errors: {self.metrics['errors']}")
+        print(f"  Total latency: {self.metrics['total_latency_ms']:.0f}ms")
+        if self.metrics['turns'] > 0:
+            print(f"  Avg latency/turn: {self.metrics['total_latency_ms'] / self.metrics['turns']:.0f}ms")
+        print(f"  Session duration: {(datetime.now() - self.session_start).total_seconds():.0f}s")
+        print()
+
+    def run_health_checks(self):
+        """Run health checks on demand."""
+        checker = HealthChecker()
+        results = checker.run_all_checks()
+        print_health_report(results)
+
     def show_help(self):
         """Show help."""
         print(f"""
@@ -423,6 +531,8 @@ class Orchestrator:
   /memory count   - Show memory count
   /memory search <query> - Search memories
   /memory clear   - Clear all memories
+  /metrics        - Show session metrics
+  /health         - Run health checks
   exit            - Exit and save memory
 
 {GREEN}Delegation:{RESET}
@@ -444,13 +554,7 @@ def main():
             print(f"  - {e}")
         return
 
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    orchestrator = Orchestrator()
+    orchestrator = Orchestrator(run_health_checks=True)
     orchestrator.run_interactive()
 
 

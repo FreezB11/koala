@@ -1,4 +1,4 @@
-# memory.py - Long-term vector store (v2: cleaned up, better error handling)
+# memory.py - Long-term vector store (v3: with summarization, better error handling)
 
 import os
 import pickle
@@ -12,6 +12,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from config import config
+from retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ class MemoryEntry:
     access_count: int = 0
     created_at: float = field(default_factory=lambda: datetime.now().timestamp())
     updated_at: float = field(default_factory=lambda: datetime.now().timestamp())
+    # v3: summarization metadata
+    is_summary: bool = False
+    source_count: int = 1  # How many memories were merged into this
 
 
 class LocalVectorStore:
@@ -66,7 +70,41 @@ class LocalVectorStore:
         self.index.add(emb)
         entry = MemoryEntry(text=text, embedding=emb[0].tolist())
         self.documents.append(entry)
+        
+        # Check if we should trigger summarization
+        if len(self.documents) >= config.memory.summarization_threshold:
+            self._maybe_summarize()
+            
         return len(self.documents) - 1
+
+    def _maybe_summarize(self):
+        """Summarize old memories if we have too many."""
+        if len(self.documents) < config.memory.summarization_threshold:
+            return
+            
+        # Find memories that are long and not already summaries
+        candidates = [
+            (i, doc) for i, doc in enumerate(self.documents)
+            if not doc.is_summary and len(doc.text) > config.memory.max_memory_length
+        ]
+        
+        if not candidates:
+            return
+            
+        logger.info(f"Summarizing {len(candidates)} long memories...")
+        # For now, just truncate very long memories
+        # In the future, this could use an LLM to create proper summaries
+        for i, doc in candidates[:5]:  # Limit to 5 per trigger
+            if len(doc.text) > config.memory.max_memory_length:
+                # Keep first and last parts, add summary marker
+                truncated = doc.text[:config.memory.max_memory_length // 2] + \
+                           "\n... [truncated] ...\n" + \
+                           doc.text[-config.memory.max_memory_length // 2:]
+                doc.text = truncated
+                doc.is_summary = True
+                doc.updated_at = datetime.now().timestamp()
+        
+        self.rebuild_index()
 
     def search(self, query: str, k: int = 5) -> List[Tuple[float, str]]:
         """Search for similar memories. Returns (score, text) pairs."""

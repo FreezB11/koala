@@ -1,15 +1,19 @@
-# ggl.py - Google Gemini agent wrapper (v2: cleaned up, single interface)
+# ggl.py - Google Gemini agent wrapper (v3: with retry, health checks)
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Iterator, Union
 import json
 import itertools
+import logging
 
 from google import genai
 from google.genai import types
 
 from tools import GEMINI_TOOLS, FUNCTION_MAP, ToolResult
 from config import config
+from retry import retry_with_backoff, RetryPolicy
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["goog", "GoogleAgent", "create_google_agent"]
 
@@ -204,6 +208,11 @@ class GoogleAgent:
         self.system_prompt = system_prompt
         self.tools = _GEMINI_TOOLS_SDK
         self.function_map = FUNCTION_MAP
+        self.retry_policy = RetryPolicy(
+            max_retries=config.agent.max_retries,
+            base_delay=config.agent.retry_base_delay,
+            max_delay=config.agent.retry_max_delay,
+        )
 
     def _build_contents(self, messages: List[Dict[str, Any]]) -> List[types.Content]:
         contents = []
@@ -269,6 +278,12 @@ class GoogleAgent:
             results.append({"name": fn_name, "result": str(result)})
         return results
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        exceptions=(Exception,),
+    )
     def chat(self, messages: List[Dict[str, Any]], stream: bool = False) -> Any:
         contents = self._build_contents(messages)
         gen_config = self._build_generate_config()

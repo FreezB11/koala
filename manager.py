@@ -1,10 +1,11 @@
-# manager.py - MemoryManager (v2: improved merge, better error handling)
+# manager.py - MemoryManager (v3: improved merge, summarization, better error handling)
 
 import logging
-from typing import Optional
+from typing import Optional, List
 
 from memory import LocalVectorStore, MemoryEntry
 from config import config
+from retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class MemoryManager:
         if hasattr(doc, "text"):
             doc.text = new_text
             doc.updated_at = __import__('time').time()
+            doc.source_count += 1
         else:
             self.store.documents[idx] = new_text
 
@@ -111,3 +113,40 @@ class MemoryManager:
 
     def __bool__(self) -> bool:
         return bool(self.store)
+    
+    # v3: Summarization methods
+    def summarize_old_memories(self, max_memories: int = 10) -> int:
+        """Summarize the oldest non-summary memories."""
+        from agents.nemo import create_nemotron_agent
+        
+        # Find candidates for summarization
+        candidates = [
+            (i, doc) for i, doc in enumerate(self.store.documents)
+            if not doc.is_summary and len(doc.text) > config.memory.max_memory_length
+        ]
+        
+        if not candidates:
+            return 0
+            
+        # Sort by age (oldest first)
+        candidates.sort(key=lambda x: x[1].created_at)
+        candidates = candidates[:max_memories]
+        
+        # For now, just truncate - in future use LLM
+        summarized = 0
+        for i, doc in candidates:
+            if len(doc.text) > config.memory.max_memory_length:
+                truncated = doc.text[:config.memory.max_memory_length // 2] + \
+                           "\n... [summarized] ...\n" + \
+                           doc.text[-config.memory.max_memory_length // 2:]
+                doc.text = truncated
+                doc.is_summary = True
+                doc.updated_at = __import__('time').time()
+                summarized += 1
+        
+        if summarized > 0:
+            self.store.rebuild_index()
+            self.save()
+            logger.info(f"Summarized {summarized} memories")
+        
+        return summarized

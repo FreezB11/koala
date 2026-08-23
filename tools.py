@@ -1,14 +1,18 @@
-# tools.py - Local file/shell tools (v2: single source of truth, security hardened)
+# tools.py - Local file/shell tools (v3: with retry, better error handling)
 
 import subprocess
 import os
 import json
 import shlex
+import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from pathlib import Path
 
 from config import config
+from retry import retry_with_backoff, RetryPolicy
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,6 +21,11 @@ class ToolResult:
     success: bool
     output: str
     error: str = ""
+    metadata: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
 
     def __str__(self) -> str:
         if self.success:
@@ -27,7 +36,12 @@ class ToolResult:
         return self.success
 
     def to_dict(self) -> dict:
-        return {"success": self.success, "output": self.output, "error": self.error}
+        return {
+            "success": self.success,
+            "output": self.output,
+            "error": self.error,
+            "metadata": self.metadata
+        }
 
 
 def _validate_path(path: str) -> tuple[bool, str]:
@@ -57,10 +71,11 @@ def read_file(path: str) -> ToolResult:
 
         with open(abs_path, "r", encoding="utf-8") as f:
             content = f.read()
-        return ToolResult(True, content)
+        return ToolResult(True, content, metadata={"size_bytes": len(content), "path": abs_path})
     except FileNotFoundError:
         return ToolResult(False, "", f"File not found: {path}")
     except Exception as e:
+        logger.error(f"read_file error: {e}")
         return ToolResult(False, "", str(e))
 
 
@@ -77,8 +92,9 @@ def write_file(path: str, content: str) -> ToolResult:
 
         with open(abs_path, "w", encoding="utf-8") as f:
             f.write(content)
-        return ToolResult(True, "File written successfully")
+        return ToolResult(True, "File written successfully", metadata={"size_bytes": len(content), "path": abs_path})
     except Exception as e:
+        logger.error(f"write_file error: {e}")
         return ToolResult(False, "", str(e))
 
 
@@ -103,9 +119,19 @@ def list_files(path: str = ".") -> ToolResult:
 
         output = "Directories:\n" + ("\n".join(dirs) if dirs else "(none)")
         output += "\n\nFiles:\n" + ("\n".join(files) if files else "(none)")
-        return ToolResult(True, output)
+        return ToolResult(True, output, metadata={"dirs": len(dirs), "files": len(files), "path": abs_path})
     except Exception as e:
+        logger.error(f"list_files error: {e}")
         return ToolResult(False, "", str(e))
+
+
+# Retry policy for commands (only for transient failures)
+command_retry_policy = RetryPolicy(
+    max_retries=2,
+    base_delay=0.5,
+    max_delay=5.0,
+    retryable_status_codes=()  # Commands don't have HTTP status codes
+)
 
 
 def run_command(command: str, timeout: int = None) -> ToolResult:
@@ -138,13 +164,14 @@ def run_command(command: str, timeout: int = None) -> ToolResult:
         if result.stderr:
             output += f"\n[stderr] {result.stderr}"
         if result.returncode != 0:
-            return ToolResult(False, output, f"Exit code: {result.returncode}")
-        return ToolResult(True, output)
+            return ToolResult(False, output, f"Exit code: {result.returncode}", metadata={"exit_code": result.returncode})
+        return ToolResult(True, output, metadata={"exit_code": 0})
     except subprocess.TimeoutExpired:
         return ToolResult(False, "", f"Command timed out after {timeout}s")
     except FileNotFoundError:
         return ToolResult(False, "", f"Command not found: {args[0]}")
     except Exception as e:
+        logger.error(f"run_command error: {e}")
         return ToolResult(False, "", str(e))
 
 

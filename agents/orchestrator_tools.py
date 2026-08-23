@@ -1,4 +1,4 @@
-# orchestrator_tools.py - Factory for Google worker tools (v2: uses config)
+# orchestrator_tools.py - Factory for Google worker tools (v3: with retry)
 
 from .ggl import goog  # function entrypoint
 

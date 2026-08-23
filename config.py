@@ -1,4 +1,4 @@
-# config.py - Centralized configuration (v2: cleaned up, single source of truth)
+# config.py - Centralized configuration (v3: added retry/health settings)
 
 import os
 from dataclasses import dataclass, field
@@ -19,7 +19,7 @@ class ModelConfig:
     nemo_max_tokens: int = 16384
 
     # Google Gemini
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.5-flash"  # Correct model name from API
     gemini_temperature: float = 0.7
     gemini_max_output_tokens: int = 8192
 
@@ -36,6 +36,9 @@ class MemoryConfig:
     search_score_threshold: float = 0.65
     max_memories_in_context: int = 10
     memory_dir: str = "agent_mem"
+    # v3: summarization
+    summarization_threshold: int = 50  # summarize after N memories
+    max_memory_length: int = 5000  # chars before summarization
 
 
 @dataclass
@@ -47,6 +50,12 @@ class AgentConfig:
     max_conversation_history: int = 100
     worker_thinking_level: str = "low"
     worker_temperature: float = 0.7
+    # v3: retry settings
+    max_retries: int = 3
+    retry_base_delay: float = 1.0
+    retry_max_delay: float = 30.0
+    # v3: health check
+    health_check_timeout: int = 10
 
 
 @dataclass
@@ -61,12 +70,22 @@ class ToolConfig:
 
 
 @dataclass
+class LoggingConfig:
+    """Logging and observability configuration."""
+    level: str = "INFO"
+    format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    json_format: bool = False
+    log_file: Optional[str] = None
+
+
+@dataclass
 class Config:
     """Main configuration container."""
     models: ModelConfig = field(default_factory=ModelConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     tools: ToolConfig = field(default_factory=ToolConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     # API Keys (loaded from env)
     nvidia_api_key: Optional[str] = field(default_factory=lambda: os.getenv("NVIDIA_API_KEY"))

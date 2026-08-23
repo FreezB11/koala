@@ -1,12 +1,16 @@
-# nemo.py - NVIDIA Nemotron agent wrapper (v2: cleaned up, consistent config)
+# nemo.py - NVIDIA Nemotron agent wrapper (v3: with retry, health checks)
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionChunk
 from typing import List, Dict, Any, Tuple, Optional
 import json
+import logging
 
 from tools import OPENAI_TOOLS, FUNCTION_MAP, ToolResult
 from config import config
+from retry import retry_with_backoff, RetryPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class NemotronAgent:
@@ -26,6 +30,11 @@ class NemotronAgent:
         self.model = model or config.models.nemo_model
         self.system_prompt = system_prompt
         self.tools = OPENAI_TOOLS
+        self.retry_policy = RetryPolicy(
+            max_retries=config.agent.max_retries,
+            base_delay=config.agent.retry_base_delay,
+            max_delay=config.agent.retry_max_delay,
+        )
 
     def _build_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Build messages for Nemotron API."""
@@ -56,8 +65,15 @@ class NemotronAgent:
 
         return result
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        exceptions=(Exception,),
+        should_retry=lambda e: hasattr(e, 'status_code') and e.status_code in (429, 500, 502, 503, 504)
+    )
     def stream(self, messages: List[Dict[str, Any]]) -> ChatCompletionChunk:
-        """Stream a completion."""
+        """Stream a completion with retry."""
         return self.client.chat.completions.create(
             model=self.model,
             messages=self._build_messages(messages),
@@ -69,8 +85,15 @@ class NemotronAgent:
             stream=True
         )
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        exceptions=(Exception,),
+        should_retry=lambda e: hasattr(e, 'status_code') and e.status_code in (429, 500, 502, 503, 504)
+    )
     def complete(self, messages: List[Dict[str, Any]]) -> Any:
-        """Non-streaming completion."""
+        """Non-streaming completion with retry."""
         return self.client.chat.completions.create(
             model=self.model,
             messages=self._build_messages(messages),
