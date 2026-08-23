@@ -1,12 +1,11 @@
-# manager.py - MemoryManager (v2: improved merge, better error handling)
+# manager.py
+#
+# This is now the ONE canonical MemoryManager. The duplicate MemoryManager
+# that used to live in memory.py has been removed (it was dead code -- every
+# caller imports MemoryManager from here, not from memory.py).
 
-import logging
-from typing import Optional
-
-from memory import LocalVectorStore, MemoryEntry
+from memory import LocalVectorStore
 from config import config
-
-logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
@@ -22,10 +21,9 @@ class MemoryManager:
 
     def process(self, text: str) -> str:
         """
-        Process new text into memory.
         Returns: 'duplicate' | 'update' | 'new'
         """
-        if len(self.store) == 0:
+        if len(self.store.documents) == 0:
             self.store.add(text)
             return "new"
 
@@ -37,27 +35,31 @@ class MemoryManager:
 
         score, memory_text = matches[0]
 
-        logger.debug(f"Best match score: {score:.4f}")
-        logger.debug(f"Memory text: {memory_text[:100]}...")
+        print(f"\nBest Match ({score:.4f})")
+        print(memory_text)
 
         # Exact duplicate
         if score >= self.duplicate_threshold:
-            logger.info("Duplicate detected, skipping")
             return "duplicate"
 
         # Related memory -> merge
         if score >= self.related_threshold:
             merged = self.merge(memory_text, text)
 
+            # FIX: `self.store.documents` holds MemoryEntry objects (or
+            # strings, depending on which LocalVectorStore you're using) --
+            # `.index(memory_text)` on a *string* against a list of entry
+            # objects would always raise ValueError. Find by comparing the
+            # underlying text field instead.
             idx = self._find_index(memory_text)
             if idx == -1:
-                logger.warning("Could not find memory to update, adding as new")
+                # couldn't find it (shouldn't normally happen) -- fall back
+                # to just adding the new text rather than crashing.
                 self.store.add(text)
                 return "new"
 
             self._set_document_text(idx, merged)
-            self.store.rebuild_index()
-            logger.info("Memory updated (merged)")
+            self.rebuild_index()
             return "update"
 
         # Brand new topic
@@ -66,8 +68,8 @@ class MemoryManager:
 
     def _find_index(self, text: str) -> int:
         for i, doc in enumerate(self.store.documents):
-            doc_text = getattr(doc, "text", doc)
-            if doc_text == text:
+            doc_text = getattr(doc, "text", doc)  # works whether doc is a
+            if doc_text == text:                   # MemoryEntry or a raw str
                 return i
         return -1
 
@@ -75,39 +77,28 @@ class MemoryManager:
         doc = self.store.documents[idx]
         if hasattr(doc, "text"):
             doc.text = new_text
-            doc.updated_at = __import__('time').time()
         else:
             self.store.documents[idx] = new_text
 
     def merge(self, old_memory: str, new_memory: str) -> str:
         """
-        Merge strategy: append with separator.
-        Could be replaced with LLM summarization later.
+        Simple merge strategy.
+        Replace later with LLM summarization.
         """
         return f"{old_memory}\n---\n{new_memory}"
 
-    def search(self, query: str, k: int = None) -> list:
-        """Search memories."""
-        if k is None:
-            k = config.memory.search_k
-        return self.store.search(query, k=k)
+    def rebuild_index(self):
+        import faiss
 
-    def get_all_memories(self) -> list:
-        """Get all memory entries."""
-        return self.store.get_all()
+        dim = self.store.model.get_sentence_embedding_dimension()
+        self.store.index = faiss.IndexFlatIP(dim)
 
-    def get_all_texts(self) -> list:
-        """Get all memory texts."""
-        return self.store.get_all_texts()
+        if not self.store.documents:
+            return
+
+        texts = [getattr(doc, "text", doc) for doc in self.store.documents]
+        embeddings = self.store.model.encode(texts, normalize_embeddings=True)
+        self.store.index.add(embeddings)
 
     def save(self):
         self.store.save()
-
-    def clear(self):
-        self.store.clear()
-
-    def __len__(self) -> int:
-        return len(self.store)
-
-    def __bool__(self) -> bool:
-        return bool(self.store)

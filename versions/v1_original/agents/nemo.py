@@ -1,4 +1,4 @@
-# nemo.py - NVIDIA Nemotron agent wrapper (v2: cleaned up, consistent config)
+# nemo.py - NVIDIA Nemotron agent wrapper
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionChunk
@@ -20,10 +20,10 @@ class NemotronAgent:
         system_prompt: str = ""
     ):
         self.client = OpenAI(
-            base_url=base_url or config.models.nemo_base_url,
+            base_url=base_url or config.agent.nvidia_base_url,
             api_key=api_key or config.nvidia_api_key
         )
-        self.model = model or config.models.nemo_model
+        self.model = model or config.agent.nvidia_model
         self.system_prompt = system_prompt
         self.tools = OPENAI_TOOLS
 
@@ -63,9 +63,8 @@ class NemotronAgent:
             messages=self._build_messages(messages),
             tools=self.tools,
             tool_choice="auto",
-            temperature=config.models.nemo_temperature,
-            top_p=config.models.nemo_top_p,
-            max_tokens=config.models.nemo_max_tokens,
+            temperature=config.agent.temperature,
+            max_tokens=config.agent.max_output_tokens,
             stream=True
         )
 
@@ -76,9 +75,8 @@ class NemotronAgent:
             messages=self._build_messages(messages),
             tools=self.tools,
             tool_choice="auto",
-            temperature=config.models.nemo_temperature,
-            top_p=config.models.nemo_top_p,
-            max_tokens=config.models.nemo_max_tokens,
+            temperature=config.agent.temperature,
+            max_tokens=config.agent.max_output_tokens,
             stream=False
         )
 
@@ -95,18 +93,22 @@ def stream_nemotron_turn(
     Returns (reply_text, tool_calls) where tool_calls is a list of
     {"id", "name", "arguments"} dicts (arguments = raw JSON string).
     """
+    # `memory` here is the full running message list (orch.py passes its
+    # own `messages`, already containing the latest user turn -- see
+    # nvidia_nemo() below, which is what orch.py actually calls). Only
+    # append input_text as an extra user message if it's non-empty, so we
+    # don't double up when the caller already appended the user's message.
     messages = list(memory)
     if input_text:
         messages = messages + [{"role": "user", "content": input_text}]
 
     resp_stream = client.chat.completions.create(
-        model=config.models.nemo_model,
+        model=config.agent.nvidia_model,
         messages=messages,
         tools=tools,
         tool_choice="auto",
-        temperature=config.models.nemo_temperature,
-        top_p=config.models.nemo_top_p,
-        max_tokens=config.models.nemo_max_tokens,
+        temperature=config.agent.temperature,
+        max_tokens=config.agent.max_output_tokens,
         stream=True
     )
 
@@ -146,19 +148,22 @@ def stream_nemotron_turn(
 def nvidia_nemo(
     client: OpenAI,
     memory: List[Dict[str, Any]],
-    input: str = "",
+    input: str = "",       # FIX: orch.py calls nvidia_nemo(..., input="", ...)
     tools: List[Dict[str, Any]] = None,
     stream: bool = True,
-):
+) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Wrapper matching how orchestrator calls this:
+    Wrapper matching how orch.py actually calls this:
         nvidia_nemo(nvidia_client, memory=messages, input="", tools=ALL_TOOLS, stream=True)
 
     `memory` is the full running OpenAI-style message list (already including
-    the latest user turn), `input` is an optional extra piece of text to append.
+    the latest user turn in orch.py's usage), `input` is an optional extra
+    piece of text to append as a user message (empty string means "nothing
+    to add, `memory` already has everything").
 
-    Returns a raw stream object when stream=True (orchestrator iterates it chunk
-    by chunk itself), matching the previous behavior.
+    Returns a raw stream object when stream=True (orch.py iterates it chunk
+    by chunk itself via stream_nemo_turn()), matching the previous behavior
+    orch.py relied on.
     """
     messages = list(memory)
     if input:
@@ -166,24 +171,22 @@ def nvidia_nemo(
 
     if stream:
         return client.chat.completions.create(
-            model=config.models.nemo_model,
+            model=config.agent.nvidia_model,
             messages=messages,
             tools=tools or OPENAI_TOOLS,
             tool_choice="auto",
-            temperature=config.models.nemo_temperature,
-            top_p=config.models.nemo_top_p,
-            max_tokens=config.models.nemo_max_tokens,
+            temperature=config.agent.temperature,
+            max_tokens=config.agent.max_output_tokens,
             stream=True,
         )
 
     return client.chat.completions.create(
-        model=config.models.nemo_model,
+        model=config.agent.nvidia_model,
         messages=messages,
         tools=tools or OPENAI_TOOLS,
         tool_choice="auto",
-        temperature=config.models.nemo_temperature,
-        top_p=config.models.nemo_top_p,
-        max_tokens=config.models.nemo_max_tokens,
+        temperature=config.agent.temperature,
+        max_tokens=config.agent.max_output_tokens,
         stream=False,
     )
 
@@ -197,7 +200,7 @@ def create_nemotron_agent(
     """Factory function to create a NemotronAgent."""
     return NemotronAgent(
         api_key=api_key or config.nvidia_api_key,
-        base_url=base_url or config.models.nemo_base_url,
-        model=model or config.models.nemo_model,
+        base_url=base_url or config.agent.nvidia_base_url,
+        model=model or config.agent.nvidia_model,
         system_prompt=system_prompt
     )

@@ -1,6 +1,7 @@
-# orchestrator_tools.py - Factory for Google worker tools (v2: uses config)
-
-from .ggl import goog  # function entrypoint
+from .ggl import goog  # FIX: was `GoogleAgent as goog`. This file calls
+                        # goog() as a function (memory=/input=/thinking_level=/
+                        # stream=), so it needs the function entrypoint,
+                        # not the GoogleAgent class.
 
 MAGENTA = "\033[95m"
 BLUE = "\033[94m"
@@ -8,15 +9,8 @@ RESET = "\033[0m"
 
 
 def _collect_google_reply(client, prompt: str, label: str, color: str,
-                           thinking_level: str = None, temperature: float = None) -> str:
+                           thinking_level: str = "low", temperature: float = 0.7) -> str:
     """Run one turn against a Gemini worker, streaming it live, and return the full text."""
-    from config import config
-    
-    if thinking_level is None:
-        thinking_level = config.agent.worker_thinking_level
-    if temperature is None:
-        temperature = config.agent.worker_temperature
-
     stream = goog(
         client,
         memory=[],

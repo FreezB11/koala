@@ -1,9 +1,8 @@
-# tools.py - Local file/shell tools (v2: single source of truth, security hardened)
+# tools.py - Local file/shell tools with proper structure
 
 import subprocess
 import os
 import json
-import shlex
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,36 +25,17 @@ class ToolResult:
     def __bool__(self) -> bool:
         return self.success
 
-    def to_dict(self) -> dict:
-        return {"success": self.success, "output": self.output, "error": self.error}
-
-
-def _validate_path(path: str) -> tuple[bool, str]:
-    """Validate path is within working directory. Returns (is_valid, abs_path_or_error)."""
-    try:
-        abs_path = os.path.abspath(path)
-        cwd = os.path.abspath(os.getcwd())
-        if not abs_path.startswith(cwd):
-            return False, f"Access denied: path outside working directory"
-        return True, abs_path
-    except Exception as e:
-        return False, str(e)
-
 
 def read_file(path: str) -> ToolResult:
     """Read contents of a file."""
-    valid, result = _validate_path(path)
-    if not valid:
-        return ToolResult(False, "", result)
-
     try:
-        abs_path = result
-        # Check file size
-        size_mb = os.path.getsize(abs_path) / (1024 * 1024)
-        if size_mb > config.tools.max_file_size_mb:
-            return ToolResult(False, "", f"File too large: {size_mb:.1f}MB > {config.tools.max_file_size_mb}MB limit")
+        # Security: restrict to current working directory
+        abs_path = os.path.abspath(path)
+        cwd = os.path.abspath(os.getcwd())
+        if not abs_path.startswith(cwd):
+            return ToolResult(False, "", f"Access denied: path outside working directory")
 
-        with open(abs_path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         return ToolResult(True, content)
     except FileNotFoundError:
@@ -66,16 +46,17 @@ def read_file(path: str) -> ToolResult:
 
 def write_file(path: str, content: str) -> ToolResult:
     """Write content to a file."""
-    valid, result = _validate_path(path)
-    if not valid:
-        return ToolResult(False, "", result)
-
     try:
-        abs_path = result
+        # Security: restrict to current working directory
+        abs_path = os.path.abspath(path)
+        cwd = os.path.abspath(os.getcwd())
+        if not abs_path.startswith(cwd):
+            return ToolResult(False, "", f"Access denied: path outside working directory")
+
         # Create parent directories if needed
         os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
 
-        with open(abs_path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         return ToolResult(True, "File written successfully")
     except Exception as e:
@@ -84,12 +65,12 @@ def write_file(path: str, content: str) -> ToolResult:
 
 def list_files(path: str = ".") -> ToolResult:
     """List files in a directory."""
-    valid, result = _validate_path(path)
-    if not valid:
-        return ToolResult(False, "", result)
-
     try:
-        abs_path = result
+        abs_path = os.path.abspath(path)
+        cwd = os.path.abspath(os.getcwd())
+        if not abs_path.startswith(cwd):
+            return ToolResult(False, "", f"Access denied: path outside working directory")
+
         entries = os.listdir(abs_path)
         files = []
         dirs = []
@@ -108,27 +89,12 @@ def list_files(path: str = ".") -> ToolResult:
         return ToolResult(False, "", str(e))
 
 
-def run_command(command: str, timeout: int = None) -> ToolResult:
-    """Run shell command with timeout (no shell=True for security)."""
-    if timeout is None:
-        timeout = config.tools.command_timeout
-
-    # Parse command safely without shell=True
-    try:
-        args = shlex.split(command)
-    except ValueError as e:
-        return ToolResult(False, "", f"Invalid command syntax: {e}")
-
-    # Validate command is allowed
-    if args:
-        base_cmd = os.path.basename(args[0])
-        if base_cmd not in config.tools.allowed_commands:
-            return ToolResult(False, "", f"Command not allowed: {base_cmd}. Allowed: {config.tools.allowed_commands}")
-
+def run_command(command: str, timeout: int = 60) -> ToolResult:
+    """Run shell command with timeout."""
     try:
         result = subprocess.run(
-            args,
-            shell=False,  # Security: no shell=True
+            command,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -142,8 +108,6 @@ def run_command(command: str, timeout: int = None) -> ToolResult:
         return ToolResult(True, output)
     except subprocess.TimeoutExpired:
         return ToolResult(False, "", f"Command timed out after {timeout}s")
-    except FileNotFoundError:
-        return ToolResult(False, "", f"Command not found: {args[0]}")
     except Exception as e:
         return ToolResult(False, "", str(e))
 
@@ -201,7 +165,7 @@ OPENAI_TOOLS = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Run shell command (restricted to allowed commands)",
+            "description": "Run shell command",
             "parameters": {
                 "type": "object",
                 "properties": {"command": {"type": "string"}},
@@ -211,7 +175,7 @@ OPENAI_TOOLS = [
     },
 ]
 
-# Google Gemini tool definitions (flat format for ggl.py conversion)
+# Google Gemini tool definitions
 GEMINI_TOOLS = [
     {
         "type": "function",
@@ -249,7 +213,7 @@ GEMINI_TOOLS = [
     {
         "type": "function",
         "name": "run_command",
-        "description": "Run shell command (restricted to allowed commands)",
+        "description": "Run shell command",
         "parameters": {
             "type": "object",
             "properties": {"command": {"type": "string"}},

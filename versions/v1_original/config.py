@@ -1,4 +1,4 @@
-# config.py - Centralized configuration (v2: cleaned up, single source of truth)
+# config.py - Centralized configuration
 
 import os
 from dataclasses import dataclass, field
@@ -10,13 +10,15 @@ load_dotenv()
 
 @dataclass
 class ModelConfig:
-    """Model configurations - single source for all model settings."""
+    """Model configurations."""
     # NVIDIA Nemotron
     nemo_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
     nemo_base_url: str = "https://integrate.api.nvidia.com/v1"
     nemo_temperature: float = 0.6
     nemo_top_p: float = 0.95
     nemo_max_tokens: int = 16384
+    nemo_thinking: bool = True
+    nemo_reasoning_budget: int = 16384
 
     # Google Gemini
     gemini_model: str = "gemini-2.5-flash"
@@ -45,19 +47,14 @@ class AgentConfig:
     short_input_threshold: int = 20
     memory_trigger_threshold: int = 20
     max_conversation_history: int = 100
-    worker_thinking_level: str = "low"
-    worker_temperature: float = 0.7
 
-
-@dataclass
-class ToolConfig:
-    """Tool execution configuration."""
-    command_timeout: int = 60
-    max_file_size_mb: int = 10
-    allowed_commands: list = field(default_factory=lambda: [
-        "ls", "cat", "head", "tail", "grep", "find", "python", "python3",
-        "pip", "npm", "node", "git", "mkdir", "touch", "cp", "mv", "rm", "echo"
-    ])
+    # --- Fields nemo.py / ggl.py actually reference ---
+    # (previously missing -> AttributeError as soon as those modules ran)
+    nvidia_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    google_model: str = "gemini-2.5-flash"
+    temperature: float = 0.7
+    max_output_tokens: int = 8192
 
 
 @dataclass
@@ -66,7 +63,6 @@ class Config:
     models: ModelConfig = field(default_factory=ModelConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
-    tools: ToolConfig = field(default_factory=ToolConfig)
 
     # API Keys (loaded from env)
     nvidia_api_key: Optional[str] = field(default_factory=lambda: os.getenv("NVIDIA_API_KEY"))

@@ -1,4 +1,21 @@
-# ggl.py - Google Gemini agent wrapper (v2: cleaned up, single interface)
+# ggl.py - Google Gemini agent wrapper
+#
+# NOTE: orch.py, agent0.py, and orchestrator_tools.py all import this as
+#
+#     from agents.ggl import GoogleAgent as goog
+#     ...
+#     stream = goog(client, memory=MEM, input=text, thinking_level="low",
+#                    stream=True, temperature=0.7)
+#     for event in stream:
+#         if event.event_type == "step.delta" and event.delta.type == "text": ...
+#         elif event.event_type == "step.start": ...
+#         elif event.event_type == "step.stop": ...
+#
+# i.e. `goog` is called *as a function* (not instantiated then chatted with),
+# and it returns an iterator of step-shaped events. That's the interface
+# implemented below. The old class-based GoogleAgent (chat()/stream_tool_calls())
+# is kept for anyone still using it directly, but `goog`/`GoogleAgent` as
+# imported by the orchestrator code now resolves to `goog()`, the function.
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Iterator, Union
@@ -15,7 +32,15 @@ __all__ = ["goog", "GoogleAgent", "create_google_agent"]
 
 
 def _build_gemini_tools(flat_tools: List[Dict[str, Any]]) -> List[types.Tool]:
-    """Convert flat tool dicts to google-genai types.Tool objects."""
+    """Convert the flat, OpenAI-ish tool dicts in tools.GEMINI_TOOLS
+    ({"type": "function", "name": ..., "description": ..., "parameters": ...})
+    into real google-genai `types.Tool(function_declarations=[...])` objects.
+
+    Passing the flat dicts straight into GenerateContentConfig(tools=...) is
+    what caused the pydantic "Extra inputs are not permitted" / "Input should
+    be callable" validation errors -- types.Tool doesn't accept that shape,
+    it expects a FunctionDeclaration list.
+    """
     declarations = [
         types.FunctionDeclaration(
             name=t["name"],
@@ -68,7 +93,9 @@ def _thinking_config(thinking_level: str) -> Optional[types.ThinkingConfig]:
 
 
 def _build_contents(memory: List[Dict[str, Any]], input_text: str) -> List[types.Content]:
-    """Convert memory history + new input into Gemini Content objects."""
+    """Convert the loose `memory` history (list of {"type": ..., "content": [...]})
+    used by agent0.py/orchestrator_tools.py plus the new user input into
+    Gemini `Content` objects."""
     contents: List[types.Content] = []
 
     for msg in memory:
@@ -176,15 +203,18 @@ def goog(
     temperature: float = 0.7,
     model: Optional[str] = None,
     system_prompt: str = "",
-) -> Union[Iterator[_Event], str]:
+) -> Iterator[_Event]:
     """
-    Function-style entrypoint matching how orchestrator_tools.py calls `goog(...)`.
+    Function-style entrypoint matching how orch.py / agent0.py /
+    orchestrator_tools.py call `goog(...)`.
 
     Only `stream=True` is supported (that's the only mode any caller uses);
     it returns a generator of step events.
     """
     memory = memory or []
     if not stream:
+        # Collect the streamed events into a single text reply for callers
+        # that pass stream=False.
         events = list(_stream_events(client, memory, input, thinking_level, temperature, model, system_prompt))
         text = "".join(e.delta.text for e in events if e.delta and e.delta.type == "text")
         return text
@@ -192,15 +222,17 @@ def goog(
 
 
 # --------------------------------------------------------------------------
-# Class-based wrapper for OpenAI-style message lists
+# Original class-based wrapper, kept for direct/manual use.
 # --------------------------------------------------------------------------
 
 class GoogleAgent:
-    """Wrapper for Google Gemini API with OpenAI-style message lists."""
+    """Wrapper for Google Gemini API with tool support (message-list style,
+    NOT the memory=/input= step-event style used by the orchestrator code —
+    use `goog()` above for that)."""
 
     def __init__(self, api_key: str = None, model: str = None, system_prompt: str = ""):
         self.client = genai.Client(api_key=api_key or config.google_api_key)
-        self.model = model or config.models.gemini_model
+        self.model = model or config.agent.google_model
         self.system_prompt = system_prompt
         self.tools = _GEMINI_TOOLS_SDK
         self.function_map = FUNCTION_MAP
@@ -249,8 +281,8 @@ class GoogleAgent:
                     mode=types.FunctionCallingConfigMode.AUTO
                 )
             ),
-            temperature=config.agent.worker_temperature,
-            max_output_tokens=config.models.gemini_max_output_tokens,
+            temperature=config.agent.temperature,
+            max_output_tokens=config.agent.max_output_tokens,
         )
 
     def execute_tools(self, function_calls: List[Any]) -> List[Dict[str, Any]]:
@@ -303,6 +335,6 @@ class GoogleAgent:
 def create_google_agent(system_prompt: str = "", api_key: str = None, model: str = None) -> GoogleAgent:
     return GoogleAgent(
         api_key=api_key or config.google_api_key,
-        model=model or config.models.gemini_model,
+        model=model or config.agent.google_model,
         system_prompt=system_prompt,
     )

@@ -1,4 +1,4 @@
-# orchestrator.py - Main orchestrator agent (Nemo) (v2: consolidated, robust)
+# orchestrator.py - Main orchestrator agent (Nemo)
 
 import os
 import json
@@ -11,9 +11,10 @@ load_dotenv()
 
 from openai import OpenAI
 from google import genai
+from google.genai import types
 
 from config import config
-from manager import MemoryManager
+from memory import MemoryManager
 from tools import (
     FUNCTION_MAP,
     OPENAI_TOOLS,
@@ -24,8 +25,6 @@ from tools import (
     list_files,
     run_command,
 )
-from agents.nemo import nvidia_nemo
-from agents.orchestrator_tools import make_google_agent_tools
 from ascii import asciii
 
 # Colors
@@ -58,32 +57,31 @@ class GoogleWorker:
     client: genai.Client
     label: str
     color: str
-    system_prompt: str = "You are a helpful coding assistant. Be concise and practical. Use tools when needed."
+    system_prompt: str = "You are a helpful coding assistant. Be concise and practical."
 
     def run(self, prompt: str, stream: bool = True) -> str:
         """Run the worker on a prompt, streaming output."""
-        from agents.ggl import goog
-        from config import config
-
         print(f"{self.color}[{self.label}] {RESET}", end="", flush=True)
 
-        stream_iter = goog(
-            self.client,
-            memory=[],
-            input=prompt,
-            thinking_level=config.agent.worker_thinking_level,
-            stream=True,
-            temperature=config.agent.worker_temperature,
+        response = self.client.models.generate_content(
+            model=config.models.gemini_model,
+            contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
+            config=types.GenerateContentConfig(
+                system_instruction=self.system_prompt,
+                temperature=config.models.gemini_temperature,
+                tools=GEMINI_TOOLS,
+            ),
+            stream=stream,
         )
 
         text = ""
         if stream:
-            for event in stream_iter:
-                if event.event_type == "step.delta" and event.delta.type == "text":
-                    print(f"{self.color}{event.delta.text}{RESET}", end="", flush=True)
-                    text += event.delta.text
+            for chunk in response:
+                if chunk.text:
+                    print(f"{self.color}{chunk.text}{RESET}", end="", flush=True)
+                    text += chunk.text
         else:
-            text = stream_iter
+            text = response.text or ""
             print(f"{self.color}{text}{RESET}", end="", flush=True)
 
         print()
@@ -98,20 +96,19 @@ class Orchestrator:
         self.setup_memory()
         self.messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.max_turns = config.agent.max_turns
-        self.turn_count = 0
 
     def setup_clients(self):
         """Initialize API clients."""
         # NVIDIA Nemotron client
         self.nvidia_client = OpenAI(
             base_url=config.models.nemo_base_url,
-            api_key=config.nvidia_api_key,
+            api_key=config.models.nvidia_api_key,
         )
 
         # Google Gemini clients (two workers, potentially different keys)
-        self.google_client_1 = genai.Client(api_key=config.google_api_key)
+        self.google_client_1 = genai.Client(api_key=config.models.google_api_key)
         self.google_client_2 = genai.Client(
-            api_key=config.google_api_key_2 or config.google_api_key
+            api_key=config.models.google_api_key_2 or config.models.google_api_key
         )
 
         # Worker agents
@@ -156,11 +153,18 @@ class Orchestrator:
 
     def stream_nemo_turn(self) -> tuple[str, List[Dict[str, Any]]]:
         """Stream one Nemo turn, return (reply_text, tool_calls)."""
-        stream = nvidia_nemo(
-            self.nvidia_client,
-            memory=self.messages,
-            input="",
+        stream = self.nvidia_client.chat.completions.create(
+            model=config.models.nemo_model,
+            messages=self.messages,
+            temperature=config.models.nemo_temperature,
+            top_p=config.models.nemo_top_p,
+            max_tokens=config.models.nemo_max_tokens,
+            extra_body={
+                "chat_template_kwargs": {"enable_thinking": config.models.nemo_thinking},
+                "reasoning_budget": config.models.nemo_reasoning_budget,
+            },
             tools=OPENAI_TOOLS + self._get_google_tools(),
+            tool_choice="auto",
             stream=True,
         )
 
@@ -443,12 +447,6 @@ def main():
         for e in errors:
             print(f"  - {e}")
         return
-
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
 
     orchestrator = Orchestrator()
     orchestrator.run_interactive()
