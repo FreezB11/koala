@@ -44,7 +44,7 @@ class MemoryConfig:
 @dataclass
 class AgentConfig:
     """Agent behavior configuration."""
-    max_turns: int = 6
+    max_turns: int = 50
     short_input_threshold: int = 20
     memory_trigger_threshold: int = 20
     max_conversation_history: int = 100
