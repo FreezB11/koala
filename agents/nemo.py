@@ -93,10 +93,16 @@ def stream_nemotron_turn(
     Returns (reply_text, tool_calls) where tool_calls is a list of
     {"id", "name", "arguments"} dicts (arguments = raw JSON string).
     """
-    # Add user message
-    messages = memory + [{"role": "user", "content": input_text}]
+    # `memory` here is the full running message list (orch.py passes its
+    # own `messages`, already containing the latest user turn -- see
+    # nvidia_nemo() below, which is what orch.py actually calls). Only
+    # append input_text as an extra user message if it's non-empty, so we
+    # don't double up when the caller already appended the user's message.
+    messages = list(memory)
+    if input_text:
+        messages = messages + [{"role": "user", "content": input_text}]
 
-    stream = client.chat.completions.create(
+    resp_stream = client.chat.completions.create(
         model=config.agent.nvidia_model,
         messages=messages,
         tools=tools,
@@ -109,7 +115,7 @@ def stream_nemotron_turn(
     reply_text = ""
     tool_calls_acc = {}
 
-    for chunk in stream:
+    for chunk in resp_stream:
         if not chunk.choices:
             continue
 
@@ -142,14 +148,47 @@ def stream_nemotron_turn(
 def nvidia_nemo(
     client: OpenAI,
     memory: List[Dict[str, Any]],
-    input_text: str,
-    tools: List[Dict[str, Any]],
-    stream: bool = True
+    input: str = "",       # FIX: orch.py calls nvidia_nemo(..., input="", ...)
+    tools: List[Dict[str, Any]] = None,
+    stream: bool = True,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Wrapper for backward compatibility with orchestrator.
+    Wrapper matching how orch.py actually calls this:
+        nvidia_nemo(nvidia_client, memory=messages, input="", tools=ALL_TOOLS, stream=True)
+
+    `memory` is the full running OpenAI-style message list (already including
+    the latest user turn in orch.py's usage), `input` is an optional extra
+    piece of text to append as a user message (empty string means "nothing
+    to add, `memory` already has everything").
+
+    Returns a raw stream object when stream=True (orch.py iterates it chunk
+    by chunk itself via stream_nemo_turn()), matching the previous behavior
+    orch.py relied on.
     """
-    return stream_nemotron_turn(client, memory, input_text, tools, stream)
+    messages = list(memory)
+    if input:
+        messages = messages + [{"role": "user", "content": input}]
+
+    if stream:
+        return client.chat.completions.create(
+            model=config.agent.nvidia_model,
+            messages=messages,
+            tools=tools or OPENAI_TOOLS,
+            tool_choice="auto",
+            temperature=config.agent.temperature,
+            max_tokens=config.agent.max_output_tokens,
+            stream=True,
+        )
+
+    return client.chat.completions.create(
+        model=config.agent.nvidia_model,
+        messages=messages,
+        tools=tools or OPENAI_TOOLS,
+        tool_choice="auto",
+        temperature=config.agent.temperature,
+        max_tokens=config.agent.max_output_tokens,
+        stream=False,
+    )
 
 
 def create_nemotron_agent(

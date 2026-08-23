@@ -48,6 +48,14 @@ class AgentConfig:
     memory_trigger_threshold: int = 20
     max_conversation_history: int = 100
 
+    # --- Fields nemo.py / ggl.py actually reference ---
+    # (previously missing -> AttributeError as soon as those modules ran)
+    nvidia_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    google_model: str = "gemini-2.5-flash"
+    temperature: float = 0.7
+    max_output_tokens: int = 8192
+
 
 @dataclass
 class Config:

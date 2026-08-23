@@ -6,7 +6,10 @@ load_dotenv()
 from google import genai
 from openai import OpenAI
 
-from agents.ggl import goog
+from agents.ggl import goog  # FIX: was `GoogleAgent as goog`. goog() is the
+                              # function-style, step-streaming entrypoint that
+                              # this file actually calls (memory=/input=/
+                              # thinking_level=/stream=), not the GoogleAgent class.
 from agents.nemo import nvidia_nemo
 
 from agents.tools import FUNCTION_MAP
@@ -28,7 +31,7 @@ AKL = [
 ]
 
 goog_client = genai.Client(api_key=os.getenv(AKL[1].format(i=3)))
-nvidia_client = OpenAI(base_url = "https://integrate.api.nvidia.com/v1",api_key=os.getenv(AKL[3]))
+nvidia_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=os.getenv(AKL[3]))
 
 memdb = MemoryManager()
 MEM = []
@@ -41,13 +44,14 @@ def should_consider_memory(text: str) -> bool:
         return False
 
     junk = {
-        "ok","okay","thanks","thank you","cool","nice","yep","yes","no","hi","hello"
+        "ok", "okay", "thanks", "thank you", "cool", "nice", "yep", "yes", "no", "hi", "hello"
     }
 
     if text.lower() in junk:
         return False
 
     return True
+
 
 def retrieve_memories(query: str, k: int = 5) -> str:
     if len(memdb.store.documents) == 0:
@@ -59,9 +63,7 @@ def retrieve_memories(query: str, k: int = 5) -> str:
 
         for score, memory in results:
             if score > 0.65:
-                memories.append(
-                    f"[similarity={score:.2f}] {memory}"
-                )
+                memories.append(f"[similarity={score:.2f}] {memory}")
 
         return "\n".join(memories)
 
@@ -72,76 +74,48 @@ def retrieve_memories(query: str, k: int = 5) -> str:
 
 while True:
     try:
-        inp = input(
-            f"{ORANGE}agent0 $> {RESET}"
-        ).strip()
+        inp = input(f"{ORANGE}agent0 $> {RESET}").strip()
 
         if not inp:
             continue
 
         if inp.lower() == "/memory":
-
             print("\n=== LONG TERM MEMORY ===")
 
             if not memdb.store.documents:
                 print("No memories stored.")
-
             else:
-                for i, memory in enumerate(
-                    memdb.store.documents,
-                    start=1
-                ):
+                for i, memory in enumerate(memdb.store.documents, start=1):
                     print(f"\n[{i}]")
                     print(memory)
 
-            print(
-                f"\nTotal Memories: "
-                f"{len(memdb.store.documents)}\n"
-            )
-
+            print(f"\nTotal Memories: {len(memdb.store.documents)}\n")
             continue
 
         if inp.lower() == "/memory count":
-            print(f"Total Memories: "f"{len(memdb.store.documents)}")
+            print(f"Total Memories: {len(memdb.store.documents)}")
             continue
 
-
         if inp.lower().startswith("/memory search "):
-
             query = inp[len("/memory search "):]
+            results = memdb.store.search(query, k=10)
 
-            results = memdb.store.search(
-                query,
-                k=10
-            )
-
-            print(f"\n=== SEARCH RESULTS "f"FOR '{query}' ===")
-
+            print(f"\n=== SEARCH RESULTS FOR '{query}' ===")
             for score, memory in results:
                 print(f"\nScore: {score:.4f}")
                 print(memory)
-
             print()
             continue
 
-
         if inp.lower() == "/memory clear":
-
             memdb.store.documents.clear()
 
             import faiss
-
-            dim = (
-                memdb.store.model
-                .get_sentence_embedding_dimension()
-            )
-
+            dim = memdb.store.model.get_sentence_embedding_dimension()
             memdb.store.index = faiss.IndexFlatIP(dim)
 
             memdb.save()
-
             print("Memory cleared.")
-
             continue
 
         if inp.lower() in {"exit", "quit"}:
@@ -149,20 +123,14 @@ while True:
             break
 
         memory_context = retrieve_memories(inp)
-
         enhanced_input = inp
 
         if memory_context:
-
-            enhanced_input = f"""
-                    Relevant memories from previous conversations:
-
-                    {memory_context}
-
-                    Current user message:
-
-                    {inp}
-                    """
+            enhanced_input = (
+                f"Relevant memories from previous conversations:\n\n"
+                f"{memory_context}\n\n"
+                f"Current user message:\n\n{inp}"
+            )
 
         stream = goog(
             goog_client,
@@ -175,7 +143,6 @@ while True:
 
         reply_text = ""
         pending_tool_calls = []
-
         current_call = None
 
         for event in stream:
@@ -206,26 +173,8 @@ while True:
                     })
                     current_call = None
 
-        # for event in stream:
-        #     # print(f"DEBUG: {event.event_type} | {event}")  # add this temporarily
-        #     if event.event_type == "step.delta"and event.delta.type == "text":
-        #         print(event.delta.text, end="")
-        #         reply_text += event.delta.text
-        #     elif event.event_type == "step.start":
-        #         step = event.step
-        #         if hasattr(step, "type") and step.type == "function_call":
-        #             print(f"DEBUG args: {repr(step.arguments)}")
-        #             args = step.arguments
-        #             if isinstance(args, str):
-        #                 args = json.loads(args)
-        #             pending_tool_calls.append({
-        #                 "name": step.name,
-        #                 "args": args or {},
-        #                 "call_id": step.id,
-        #             })
         print()
 
-        # execute any tool calls
         for call in pending_tool_calls:
             fn = FUNCTION_MAP.get(call["name"])
             print(f"{CYAN}[tool: {call['name']}]{RESET}")
@@ -239,22 +188,12 @@ while True:
 
         MEM.append({
             "type": "user_input",
-            "content": [
-                {
-                    "type": "text",
-                    "text": inp
-                }
-            ]
+            "content": [{"type": "text", "text": inp}]
         })
 
         MEM.append({
             "type": "model_output",
-            "content": [
-                {
-                    "type": "text",
-                    "text": reply_text
-                }
-            ]
+            "content": [{"type": "text", "text": reply_text}]
         })
 
         if len(MEM) > 100:
@@ -262,7 +201,7 @@ while True:
 
         if should_consider_memory(inp):
             action = memdb.process(inp)
-            print( f"{GREEN}[memory: {action}]{RESET}")
+            print(f"{GREEN}[memory: {action}]{RESET}")
             memdb.save()
 
     except KeyboardInterrupt:

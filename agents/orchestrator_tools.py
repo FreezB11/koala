@@ -1,4 +1,7 @@
-from .ggl import goog
+from .ggl import goog  # FIX: was `GoogleAgent as goog`. This file calls
+                        # goog() as a function (memory=/input=/thinking_level=/
+                        # stream=), so it needs the function entrypoint,
+                        # not the GoogleAgent class.
 
 MAGENTA = "\033[95m"
 BLUE = "\033[94m"
